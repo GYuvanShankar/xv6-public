@@ -74,7 +74,7 @@ void            kbdintr(void);
 
 // lapic.c
 void            cmostime(struct rtcdate *r);
-int             lapicid(void);
+int             cpunum(void);
 extern volatile uint*    lapic;
 void            lapiceoi(void);
 void            lapicinit(void);
@@ -103,23 +103,22 @@ int             pipewrite(struct pipe*, char*, int);
 
 //PAGEBREAK: 16
 // proc.c
-int             cpuid(void);
 void            exit(void);
 int             fork(void);
 int             growproc(int);
 int             kill(int);
-struct cpu*     mycpu(void);
-struct proc*    myproc();
 void            pinit(void);
 void            procdump(void);
 void            scheduler(void) __attribute__((noreturn));
 void            sched(void);
-void            setproc(struct proc*);
 void            sleep(void*, struct spinlock*);
 void            userinit(void);
 int             wait(void);
 void            wakeup(void*);
 void            yield(void);
+int             getprocs(void);
+int             clone(int, int, char *);
+int             join(void **);
 
 // swtch.S
 void            swtch(struct context**, struct context*);
@@ -135,7 +134,7 @@ void            popcli(void);
 
 // sleeplock.c
 void            acquiresleep(struct sleeplock*);
-void            releasesleep(struct sleeplock*);
+void             releasesleep(struct sleeplock*);
 int             holdingsleep(struct sleeplock*);
 void            initsleeplock(struct sleeplock*, char*);
 

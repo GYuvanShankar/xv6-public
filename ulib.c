@@ -3,9 +3,89 @@
 #include "fcntl.h"
 #include "user.h"
 #include "x86.h"
+#include "mmu.h"
+
+void lock_init(lock_t *lock)
+{
+  lock->locked = 0;
+}
+
+void lock_acquire(lock_t *lock)
+{
+  while (xchg(&(lock->locked), 1) != 0)
+    ;
+
+  __sync_synchronize();
+}
+
+void lock_release(lock_t *lock)
+{
+  __sync_synchronize();
+
+  // Atomic set lock->locked = 0
+  asm volatile("movl $0, %0" : "+m" (lock->locked) : );
+}
+
+int
+thread_create(void (*start_routine)(void*), void *arg)
+{
+  // The stack needs to be page aligned. The only alignment guarantee
+  // malloc gives us is alignment to sizeof(long) (we will make our
+  // implementation independent of this, however).
+  //
+  // To get around this, we will request more memory than we need and
+  // align the stack ourselves. Later on, join() will only give us the
+  // address of the stack, so we will store the starting address of the
+  // malloc'd block immediately before the stack so that thread_join()
+  // can free() the entire malloc'd block.
+  //
+  // We will request 2*PGSIZE + sizeof(void *) bytes, which will
+  // guarantee we have enough space to correctly align the stack.
+  //
+  // Note that this strategy wastes around a page of memory.
+  const uint HEADER_SZ = sizeof(uint);
+  const uint MEM_SZ = 2 * (uint)PGSIZE + HEADER_SZ;
+  uint mem = (uint) malloc(MEM_SZ);
+  if (mem == 0) {
+    return -1;
+  }
+
+  uint fst_possible_pgstart = mem + HEADER_SZ;
+  uint stack = PGROUNDUP(fst_possible_pgstart);
+
+  if (stack - HEADER_SZ < mem || stack + PGSIZE > mem + MEM_SZ) {
+    printf(2, "WARNING in thread_create: stack does not fit in malloc'd block");
+  }
+
+  uint *header = (uint *) (stack - HEADER_SZ);
+  *header = mem;
+
+  int clonerc = clone(start_routine, arg, (void *) stack);
+  if (clonerc == -1) {
+    free((void *) mem);
+  }
+
+  return clonerc;
+}
+
+int
+thread_join()
+{
+  void *stack;
+  int joinrc = join(&stack);
+  if (joinrc < 0) {
+    return -1;
+  }
+
+  uint *header = ((uint *) stack) - 1;
+  void *malloc_block_start = (void *) *header;
+  free(malloc_block_start);
+
+  return joinrc;
+}
 
 char*
-strcpy(char *s, const char *t)
+strcpy(char *s, char *t)
 {
   char *os;
 
@@ -24,7 +104,7 @@ strcmp(const char *p, const char *q)
 }
 
 uint
-strlen(const char *s)
+strlen(char *s)
 {
   int n;
 
@@ -68,7 +148,7 @@ gets(char *buf, int max)
 }
 
 int
-stat(const char *n, struct stat *st)
+stat(char *n, struct stat *st)
 {
   int fd;
   int r;
@@ -93,10 +173,9 @@ atoi(const char *s)
 }
 
 void*
-memmove(void *vdst, const void *vsrc, int n)
+memmove(void *vdst, void *vsrc, int n)
 {
-  char *dst;
-  const char *src;
+  char *dst, *src;
 
   dst = vdst;
   src = vsrc;

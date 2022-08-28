@@ -9,9 +9,11 @@
 #include "mp.h"
 #include "x86.h"
 #include "mmu.h"
+#include "spinlock.h"
 #include "proc.h"
 
 struct cpu cpus[NCPU];
+int ismp;
 int ncpu;
 uchar ioapicid;
 
@@ -92,14 +94,13 @@ void
 mpinit(void)
 {
   uchar *p, *e;
-  int ismp;
   struct mp *mp;
   struct mpconf *conf;
   struct mpproc *proc;
   struct mpioapic *ioapic;
 
   if((conf = mpconfig(&mp)) == 0)
-    panic("Expect to run on an SMP");
+    return;
   ismp = 1;
   lapic = (uint*)conf->lapicaddr;
   for(p=(uchar*)(conf+1), e=(uchar*)conf+conf->length; p<e; ){
@@ -127,8 +128,13 @@ mpinit(void)
       break;
     }
   }
-  if(!ismp)
-    panic("Didn't find a suitable machine");
+  if(!ismp){
+    // Didn't like what we found; fall back to no MP.
+    ncpu = 1;
+    lapic = 0;
+    ioapicid = 0;
+    return;
+  }
 
   if(mp->imcrp){
     // Bochs doesn't support IMCR, so this doesn't run on Bochs.

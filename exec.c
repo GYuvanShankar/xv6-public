@@ -2,6 +2,7 @@
 #include "param.h"
 #include "memlayout.h"
 #include "mmu.h"
+#include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
 #include "x86.h"
@@ -17,20 +18,18 @@ exec(char *path, char **argv)
   struct inode *ip;
   struct proghdr ph;
   pde_t *pgdir, *oldpgdir;
-  struct proc *curproc = myproc();
 
   begin_op();
 
   if((ip = namei(path)) == 0){
     end_op();
-    cprintf("exec: fail\n");
     return -1;
   }
   ilock(ip);
   pgdir = 0;
 
   // Check ELF header
-  if(readi(ip, (char*)&elf, 0, sizeof(elf)) != sizeof(elf))
+  if(readi(ip, (char*)&elf, 0, sizeof(elf)) < sizeof(elf))
     goto bad;
   if(elf.magic != ELF_MAGIC)
     goto bad;
@@ -39,7 +38,8 @@ exec(char *path, char **argv)
     goto bad;
 
   // Load program into memory.
-  sz = 0;
+  // Don't map the page before FST_VALID_ADDR at all.
+  sz = FST_VALID_ADDR;
   for(i=0, off=elf.phoff; i<elf.phnum; i++, off+=sizeof(ph)){
     if(readi(ip, (char*)&ph, off, sizeof(ph)) != sizeof(ph))
       goto bad;
@@ -91,15 +91,23 @@ exec(char *path, char **argv)
   for(last=s=path; *s; s++)
     if(*s == '/')
       last = s+1;
-  safestrcpy(curproc->name, last, sizeof(curproc->name));
+  safestrcpy(proc->name, last, sizeof(proc->name));
 
   // Commit to the user image.
-  oldpgdir = curproc->pgdir;
-  curproc->pgdir = pgdir;
-  curproc->sz = sz;
-  curproc->tf->eip = elf.entry;  // main
-  curproc->tf->esp = sp;
-  switchuvm(curproc);
+  // proc table lock prevents another thread that is in the middle of
+  // resizing its memory from believing that this thread is still part
+  // of the same process (because p->pgdir's are the same) and then
+  // modifying this thread's p->sz after this thread has switched out
+  // the old p->pgdir for the new one.
+  acquire(&ptable.lock);
+  oldpgdir = proc->pgdir;
+  proc->pgdir = pgdir;
+  proc->sz = sz;
+  release(&ptable.lock);
+
+  proc->tf->eip = elf.entry;  // main
+  proc->tf->esp = sp;
+  switchuvm(proc);
   freevm(oldpgdir);
   return 0;
 

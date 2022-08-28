@@ -5,6 +5,7 @@
 #include "param.h"
 #include "memlayout.h"
 #include "mmu.h"
+#include "spinlock.h"
 #include "proc.h"
 
 int
@@ -39,7 +40,7 @@ sys_kill(void)
 int
 sys_getpid(void)
 {
-  return myproc()->pid;
+  return proc->pid;
 }
 
 int
@@ -50,7 +51,7 @@ sys_sbrk(void)
 
   if(argint(0, &n) < 0)
     return -1;
-  addr = myproc()->sz;
+  addr = proc->sz;
   if(growproc(n) < 0)
     return -1;
   return addr;
@@ -67,7 +68,7 @@ sys_sleep(void)
   acquire(&tickslock);
   ticks0 = ticks;
   while(ticks - ticks0 < n){
-    if(myproc()->killed){
+    if(proc->killed){
       release(&tickslock);
       return -1;
     }
@@ -88,4 +89,36 @@ sys_uptime(void)
   xticks = ticks;
   release(&tickslock);
   return xticks;
+}
+
+int
+sys_getprocs(void)
+{
+  return getprocs();
+}
+
+int
+sys_clone(void)
+{
+  int func_ptr, arg_ptr;
+  char *stack_ptr;
+
+  if (argint(0, &func_ptr) < 0 || argint(1, &arg_ptr) < 0 ||
+      argptr(2, &stack_ptr, PGSIZE)) {
+    return -1;
+  }
+
+  return clone(func_ptr, arg_ptr, stack_ptr);
+}
+
+int
+sys_join(void)
+{
+  char *stack;
+
+  if (argptr(0, &stack, sizeof(void *)) < 0) {
+    return -1;
+  }
+
+  return join((void **) stack);
 }
